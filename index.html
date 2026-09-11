@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Batyr Runner</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐎</text></svg>">
+<style>
+  :root {
+    --bg: #e9f4f8;
+    --fg: #5a5446;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    transition: background .8s;
+    font-family: "Courier New", Courier, monospace;
+    overflow: hidden;
+    touch-action: manipulation;
+    -webkit-user-select: none; user-select: none;
+  }
+  #wrap {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 10px;
+  }
+  #stage {
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    image-rendering: pixelated;
+    cursor: pointer;
+  }
+  #hint {
+    color: var(--fg);
+    opacity: .55;
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-align: center;
+    transition: color .8s;
+  }
+  .panel {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--fg);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .25s, color .8s;
+  }
+  .panel.show { opacity: 1; pointer-events: auto; }
+  .panel h1 {
+    font-size: clamp(20px, 4.5vw, 34px);
+    letter-spacing: 6px;
+    font-weight: bold;
+  }
+  .panel .sub { font-size: 14px; letter-spacing: 2px; opacity: .8; }
+  .panel button {
+    margin-top: 6px;
+    font-family: inherit;
+    font-size: 15px;
+    letter-spacing: 2px;
+    padding: 10px 26px;
+    background: transparent;
+    color: inherit;
+    border: 2px solid currentColor;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .panel button:hover { background: rgba(128,128,128,.15); }
+  #btnMute {
+    position: absolute;
+    top: 8px; left: 8px;
+    width: 34px; height: 34px;
+    font-size: 17px;
+    line-height: 1;
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    opacity: .45;
+    cursor: pointer;
+    transition: color .8s;
+    z-index: 5;
+  }
+  #btnMute:hover { opacity: .9; }
+  .newRecord {
+    font-size: 13px;
+    letter-spacing: 3px;
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <button id="btnMute" title="Звук (M)">🔊</button>
+    <div class="panel" id="panelOver">
+      <h1>G A M E&nbsp;&nbsp;O V E R</h1>
+      <div class="sub" id="overScore"></div>
+      <div class="newRecord" id="overRecord" style="display:none">★ НОВЫЙ РЕКОРД ★</div>
+      <button id="btnRestart">ЕЩЁ РАЗ</button>
+    </div>
+    <div class="panel" id="panelPause">
+      <h1>ПАУЗА</h1>
+      <div class="sub">P — продолжить</div>
+    </div>
+  </div>
+  <div id="hint">SPACE / ↑ / тап — прыжок&nbsp;&nbsp;·&nbsp;&nbsp;↓ — пригнуться под беркутом&nbsp;&nbsp;·&nbsp;&nbsp;P — пауза</div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   Batyr Runner — казахский раннер: всадник на коне скачет по
+   степи и перепрыгивает юрты, кусты, баранов и тигров, а под
+   беркутами пригибается. Один файл, без зависимостей.
+   ============================================================ */
+
+const W = 900, H = 300, GROUND = 252;
+const cv = document.getElementById("game");
+const ctx = cv.getContext("2d");
+
+function fit() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = W * dpr;
+  cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cv.style.height = "auto";
+  ctx.imageSmoothingEnabled = false;
+}
+fit();
+addEventListener("resize", fit);
+
+const storage = {
+  load() { try { return +localStorage.getItem("horse_hi") || 0; } catch { return 0; } },
+  save(v) { try { localStorage.setItem("horse_hi", v); } catch {} },
+  loadMute() { try { return localStorage.getItem("horse_mute") === "1"; } catch { return false; } },
+  saveMute(v) { try { localStorage.setItem("horse_mute", v ? "1" : "0"); } catch {} },
+};
+
+const sound = {
+  ctx: null,
+  muted: storage.loadMute(),
+  ensure() {
+    if (!this.ctx) { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+    if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
+  },
+  beep(freq, dur, type = "square", vol = 0.06, slideTo = null) {
+    if (this.muted || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.linearRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g).connect(this.ctx.destination);
+    o.start(t); o.stop(t + dur);
+  },
+  jump() { this.beep(380, 0.12, "square", 0.05, 560); },
+  milestone() { this.beep(660, 0.08); setTimeout(() => this.beep(880, 0.1), 90); },
+  hit() { this.beep(150, 0.3, "sawtooth", 0.08, 55); },
+};
+
+/* ---------- спрайты ----------
+   h конь, H тёмное (грива/хвост/копыта), m морда, p глаз,
+   s седло, k калпак, f лицо, c чапан, C тёмный чапан,
+   w шерсть, W тень шерсти, d тёмная голова, n рог,
+   o тигр, b полоса, l живот, O тёмно-рыжий,
+   e беркут, E крыло, g золотая голова, y клюв */
+
+const PXH = 2.2;
+
+const HORSE_BODY = [
+  "..........................H.H....",
+  ".........................hhhhh...",
+  "........................Hhphhh...",
+  "........................Hhhhhhm..",
+  "........................Hhhhhmm..",
+  ".......................Hhhhhh....",
+  "HH....................Hhhhh......",
+  ".HH..................Hhhhh.......",
+  ".HHH....ssssss......hhhhh........",
+  "..HHhhhhsssssshhhhhhhhhh.........",
+  "..HHhhhhhhhhhhhhhhhhhhhh.........",
+  "...Hhhhhhhhhhhhhhhhhhhh..........",
+  "...hhhhhhhhhhhhhhhhhhh...........",
+  "....hhhhhhhhhhhhhhhhhh...........",
+];
+const HORSE_LEGS_A = [ // галоп: ноги вытянуты
+  "....hh..............hhh..........",
+  "....Hhh..............hhh.........",
+  "...Hhh................hhh........",
+  "..Hh....................hh.......",
+  ".Hh......................hh......",
+  ".H........................hh.....",
+  "..........................HH.....",
+];
+const HORSE_LEGS_B = [ // галоп: ноги собраны
+  "......hh...........hh............",
+  ".......hh..........hhh...........",
+  ".......Hhh..........hh...........",
+  "........Hh..........Hh...........",
+  ".........H...........H...........",
+  ".................................",
+  ".................................",
+];
+const RIDER = [
+  "....kkk.....",
+  "...kkkkk....",
+  "...ffpf.....",
+  "....cccc....",
+  "...cccccc...",
+  "..ccccccccc.",
+  "..Ccccccc...",
+  "...Ccccc....",
+  "...cc.cc....",
+  "...cc.......",
+  "...HH.......",
+];
+const RIDER_DUCK = [
+  "......kkk...",
+  ".....kkkkk..",
+  "..cccffpf...",
+  ".cccccccccc.",
+  "..Ccc..cc...",
+  "..HH........",
+];
+const SHEEP = [
+  "....wwwwwwww....",
+  "..wwwwwwwwwwww..",
+  ".nwwwwwwwwwwwww.",
+  "dnnwwwwwwwwwwww.",
+  "ddnwwwwwwwwwwwww",
+  "dpdwwwwwwwwwwww.",
+  ".ddwwwwwwwwwwww.",
+  "...WW..WW..WW...",
+  "...WW..WW..WW...",
+];
+const TIGER = [
+  "...........................oo.",
+  "..oo.......................o..",
+  ".oooo.....................o...",
+  "opoooooooooooooooooooooooo....",
+  "ooooboobooboobooboobooooo.....",
+  "moooboobooboobooboobooooo.....",
+  ".lllboobooboobooboobolll......",
+  "..oo...oo......oo...oo........",
+  "..oo...oo......oo...oo........",
+  "..OO...OO......OO...OO........",
+];
+const EAGLE_FRAMES = [
+  [
+    "..............EE....",
+    "............EEEE....",
+    "..........EEEE......",
+    "yggeeeeeeeEEE.......",
+    ".yeeeeeeeeeeeeee....",
+    "...eeeeeeeee........",
+  ],
+  [
+    "....................",
+    "....................",
+    "....................",
+    "yggeeeeeeeee........",
+    ".yeeeeeeeeeeeeee....",
+    "...eeeeeeeEEE.......",
+    "..........EEEE......",
+    "............EEE.....",
+  ],
+];
+
+const PAL_HORSE = {
+  h: "#8a5a33", H: "#5b3a20", m: "#c9a179", p: "#221a12", s: "#b03a3a",
+  k: "#f2ede0", f: "#e0b284", c: "#3566a8", C: "#274d82",
+};
+const PAL_SHEEP = { w: "#ece4d2", W: "#b5aa93", d: "#4a3f38", n: "#c69a55", p: "#f5f2ea" };
+const PAL_TIGER = { o: "#d98736", b: "#2e2620", l: "#f0e0c0", O: "#a86626", p: "#221a12", m: "#f0e0c0" };
+const PAL_EAGLE = { e: "#5a4632", E: "#3d3022", g: "#c9a24b", y: "#e0c04f" };
+
+function drawSprite(map, x, y, pal, scale = PXH) {
+  for (let r = 0; r < map.length; r++) {
+    const row = map[r];
+    for (let c = 0; c < row.length; c++) {
+      const col = pal[row[c]];
+      if (!col) continue;
+      ctx.fillStyle = col;
+      ctx.fillRect(Math.round(x + c * scale), Math.round(y + r * scale), Math.ceil(scale), Math.ceil(scale));
+    }
+  }
+}
+
+/* ---------- состояние ---------- */
+const G = {
+  state: "idle",
+  score: 0,
+  hi: storage.load(),
+  speed: 6.5,
+  nightAmount: 0,
+  cycleTimer: 0,
+  isNight: false,
+  shake: 0,
+  milestoneFlash: 0,
+  newRecord: false,
+};
+
+const rider = {
+  x: 60, y: GROUND,
+  vy: 0,
+  jumping: false,
+  ducking: false,
+  frame: 0,
+  animT: 0,
+  jump() {
+    if (!this.jumping) {
+      this.vy = -16;
+      this.jumping = true;
+      this.ducking = false;
+      sound.jump();
+    }
+  },
+  cutJump() {
+    if (this.jumping && this.vy < -6) this.vy = -6;
+  },
+  update(dt) {
+    if (this.jumping) {
+      this.vy += 0.82 * dt * (this.ducking ? 2.2 : 1);
+      this.y += this.vy * dt;
+      if (this.y >= GROUND) { this.y = GROUND; this.vy = 0; this.jumping = false; }
+    }
+    this.animT += dt;
+    if (this.animT > 6) { this.animT = 0; this.frame ^= 1; }
+  },
+  hitbox() {
+    // конь + всадник; при пригибании верх ниже
+    const topOffset = this.ducking && !this.jumping ? 15 * PXH : 24 * PXH;
+    return { x: this.x + 8, y: this.y - topOffset, w: 26 * PXH - 4, h: topOffset - 4 };
+  },
+  draw() {
+    const bodyTop = this.y - 21 * PXH;
+    const legs = this.jumping ? HORSE_LEGS_A
+      : (G.state === "run" ? (this.frame ? HORSE_LEGS_A : HORSE_LEGS_B) : HORSE_LEGS_B);
+    drawSprite(HORSE_BODY, this.x, bodyTop, PAL_HORSE);
+    drawSprite(legs, this.x, bodyTop + 14 * PXH, PAL_HORSE);
+    if (this.ducking && !this.jumping)
+      drawSprite(RIDER_DUCK, this.x + 9 * PXH, bodyTop - 3 * PXH, PAL_HORSE, 2.6);
+    else
+      drawSprite(RIDER, this.x + 9 * PXH, bodyTop - 9 * PXH, PAL_HORSE, 2.6);
+  },
+};
+
+/* ---------- препятствия ---------- */
+const obstacles = [];
+let nextGap = 500;
+
+function spawnObstacle(force) {
+  const s = G.score;
+  const r = Math.random();
+  let kind = force;
+  if (!kind) {
+    if (s > 250 && r < 0.15) kind = "eagle";
+    else if (s > 400 && r < 0.32) kind = "tiger";
+    else if (r < 0.55) kind = Math.random() < 0.5 ? "bush" : "sheep";
+    else kind = Math.random() < 0.55 ? "yurt" : (Math.random() < 0.5 ? "bush" : "sheep");
+  }
+  if (kind === "eagle") {
+    // три высоты: перепрыгнуть, пригнуться, проскакать под ним
+    const levels = [GROUND - 2, GROUND - 56, GROUND - 108];
+    const y = levels[Math.floor(Math.random() * levels.length)];
+    obstacles.push({ kind, x: W + 40, y, w: 16 * PXH, h: 7 * PXH, frame: 0, animT: 0 });
+  } else if (kind === "tiger") {
+    obstacles.push({ kind, x: W + 30, y: GROUND, w: 26 * PXH, h: 10 * PXH, frame: 0, animT: 0 });
+  } else if (kind === "yurt") {
+    const w = 88 + Math.random() * 20;
+    obstacles.push({ kind, x: W + 30, y: GROUND, w, h: 52 + Math.random() * 10 });
+    nextGap += 100;
+  } else if (kind === "sheep") {
+    const count = 1 + Math.floor(Math.random() * 3);
+    let ox = W + 20;
+    for (let i = 0; i < count; i++) {
+      obstacles.push({ kind: "sheep", x: ox, y: GROUND, w: 14 * PXH, h: 9 * PXH });
+      ox += 14 * PXH + 6;
+    }
+  } else {
+    obstacles.push({ kind: "bush", x: W + 20, y: GROUND, w: 30 + Math.random() * 14, h: 20 + Math.random() * 10, berries: Math.random() < 0.5 });
+  }
+}
+
+const YURT = { felt: "#ece4d0", shade: "#c9bda4", band: "#a2543a", door: "#6e3222", trim: "#8a4630" };
+function drawYurt(o) {
+  const x = Math.round(o.x), base = o.y, w = o.w, h = o.h;
+  const wallH = h * 0.44, domeH = h - wallH;
+  const cx = x + w / 2;
+  // стены
+  ctx.fillStyle = YURT.felt;
+  ctx.beginPath();
+  ctx.moveTo(x + 2, base); ctx.lineTo(x + w - 2, base);
+  ctx.lineTo(x + w - 8, base - wallH); ctx.lineTo(x + 8, base - wallH);
+  ctx.closePath(); ctx.fill();
+  // купол
+  ctx.beginPath();
+  ctx.ellipse(cx, base - wallH, w / 2 - 7, domeH, 0, Math.PI, 0);
+  ctx.fill();
+  // тень справа
+  ctx.fillStyle = "rgba(90,70,50,.16)";
+  ctx.beginPath();
+  ctx.ellipse(cx, base - wallH, w / 2 - 7, domeH, 0, -Math.PI * 0.42, 0);
+  ctx.lineTo(x + w - 2, base); ctx.lineTo(cx + w * 0.16, base);
+  ctx.closePath(); ctx.fill();
+  // пояса
+  ctx.strokeStyle = YURT.band; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(x + 7, base - wallH); ctx.lineTo(x + w - 7, base - wallH); ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(cx, base - wallH, w / 2 - 16, domeH * 0.62, 0, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+  // шанырак
+  ctx.fillStyle = YURT.trim;
+  ctx.fillRect(cx - 5, base - h - 3, 10, 4);
+  // дверь с наличником
+  const dw = Math.max(14, w * 0.2), dh = wallH + domeH * 0.25;
+  ctx.fillStyle = YURT.trim;
+  ctx.fillRect(cx - dw / 2 - 2, base - dh - 2, dw + 4, dh + 2);
+  ctx.fillStyle = YURT.door;
+  ctx.fillRect(cx - dw / 2, base - dh, dw, dh);
+  ctx.strokeStyle = "#c98a4a"; ctx.lineWidth = 1;
+  ctx.strokeRect(cx - dw / 2 + 2.5, base - dh + 2.5, dw - 5, dh - 4);
+}
+
+const BUSH = { main: "#5f8f3e", dark: "#47702f", light: "#7cab52", berry: "#c23b3b" };
+function drawBush(o) {
+  const x = o.x, base = o.y, w = o.w, h = o.h;
+  ctx.fillStyle = BUSH.dark;
+  blob(x + w * 0.28, base - h * 0.4, h * 0.42);
+  ctx.fillStyle = BUSH.main;
+  blob(x + w * 0.55, base - h * 0.55, h * 0.5);
+  blob(x + w * 0.75, base - h * 0.35, h * 0.38);
+  ctx.fillStyle = BUSH.light;
+  blob(x + w * 0.45, base - h * 0.68, h * 0.3);
+  if (o.berries) {
+    ctx.fillStyle = BUSH.berry;
+    ctx.fillRect(x + w * 0.3, base - h * 0.6, 3, 3);
+    ctx.fillRect(x + w * 0.62, base - h * 0.75, 3, 3);
+    ctx.fillRect(x + w * 0.72, base - h * 0.4, 3, 3);
+  }
+  function blob(cx, cy, r) {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+    ctx.fillRect(cx - r, cy, r * 2, base - cy);
+  }
+}
+
+function drawObstacle(o) {
+  if (o.kind === "yurt") drawYurt(o);
+  else if (o.kind === "bush") drawBush(o);
+  else if (o.kind === "sheep") drawSprite(SHEEP, o.x, o.y - 9 * PXH, PAL_SHEEP);
+  else if (o.kind === "tiger") drawSprite(TIGER, o.x, o.y - 10 * PXH, PAL_TIGER);
+  else drawSprite(EAGLE_FRAMES[o.frame], o.x, o.y - 8 * PXH + 3, PAL_EAGLE);
+}
+
+function updateObstacles(dt) {
+  nextGap -= G.speed * dt;
+  if (nextGap <= 0) {
+    spawnObstacle(FORCE_KIND);
+    const base = 300 + G.speed * 20;
+    nextGap = base + Math.random() * 280;
+  }
+  for (const o of obstacles) {
+    o.x -= G.speed * dt;
+    if (o.kind === "eagle") {
+      o.animT += dt;
+      if (o.animT > 8) { o.animT = 0; o.frame ^= 1; }
+      o.x -= 1 * dt;
+    }
+    if (o.kind === "tiger") o.x -= 0.5 * dt; // тигр крадётся навстречу
+  }
+  while (obstacles.length && obstacles[0].x + obstacles[0].w * 2 < 0) obstacles.shift();
+  for (const o of obstacles) drawObstacle(o);
+}
+
+function collides() {
+  const d = rider.hitbox();
+  for (const o of obstacles) {
+    let box;
+    if (o.kind === "yurt") box = { x: o.x + 8, y: o.y - o.h + 6, w: o.w - 16, h: o.h - 6 };
+    else if (o.kind === "eagle") box = { x: o.x + 4, y: o.y - 6 * PXH, w: o.w - 8, h: 5 * PXH };
+    else box = { x: o.x + 4, y: o.y - o.h + 3, w: o.w - 8, h: o.h - 3 };
+    if (d.x < box.x + box.w && d.x + d.w > box.x && d.y < box.y + box.h && d.y + d.h > box.y) return true;
+  }
+  return false;
+}
+
+/* ---------- фон: степь, горы, небо ---------- */
+let groundOffset = 0;
+const tufts = Array.from({ length: 46 }, () => ({ x: Math.random() * W, w: 4 + Math.random() * 10, kind: Math.random() }));
+const clouds = Array.from({ length: 4 }, () => ({ x: Math.random() * W, y: 36 + Math.random() * 80, s: 0.55 + Math.random() * 0.5 }));
+const stars = Array.from({ length: 26 }, () => ({ x: Math.random() * W, y: 10 + Math.random() * 140, r: Math.random() < 0.3 ? 2 : 1 }));
+const MTN_SPAN = W + 400;
+const mountains = Array.from({ length: 6 }, (_, i) => ({ x: i * 220 + Math.random() * 100, w: 200 + Math.random() * 160, h: 52 + Math.random() * 40 }));
+const hillsNear = Array.from({ length: 5 }, (_, i) => ({ x: i * 240 + Math.random() * 100, w: 200 + Math.random() * 150, h: 12 + Math.random() * 14 }));
+let mtnOff = 0, hillOff = 0;
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function mix(c1, c2, t) {
+  return `rgb(${Math.round(lerp(c1[0], c2[0], t))},${Math.round(lerp(c1[1], c2[1], t))},${Math.round(lerp(c1[2], c2[2], t))})`;
+}
+const SKY_DAY_TOP = [140, 198, 232], SKY_NIGHT_TOP = [12, 16, 36];
+const SKY_DAY_BOT = [230, 242, 240], SKY_NIGHT_BOT = [40, 48, 84];
+const DAY_FG = [90, 84, 70], NIGHT_FG = [235, 235, 240];
+
+function drawSky(n) {
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND + 2);
+  g.addColorStop(0, mix(SKY_DAY_TOP, SKY_NIGHT_TOP, n));
+  g.addColorStop(1, mix(SKY_DAY_BOT, SKY_NIGHT_BOT, n));
+  ctx.fillStyle = g;
+  ctx.fillRect(-10, -10, W + 20, GROUND + 14);
+  if (n < 0.97) {
+    ctx.globalAlpha = 1 - n;
+    ctx.fillStyle = "rgba(255,236,160,.35)";
+    ctx.beginPath(); ctx.arc(W - 130, 62, 30, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(255,232,140,.95)";
+    ctx.beginPath(); ctx.arc(W - 130, 62, 20, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawScenery(dt) {
+  // облака
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  for (const c of clouds) {
+    if (G.state === "run") c.x -= G.speed * 0.22 * c.s * dt;
+    if (c.x < -80) { c.x = W + 60; c.y = 36 + Math.random() * 80; }
+    ctx.fillRect(c.x, c.y, 52 * c.s, 8);
+    ctx.fillRect(c.x + 10 * c.s, c.y - 6, 26 * c.s, 6);
+  }
+  if (G.state === "run") {
+    mtnOff = (mtnOff + G.speed * 0.08 * dt) % MTN_SPAN;
+    hillOff = (hillOff + G.speed * 0.25 * dt) % MTN_SPAN;
+  }
+  // горы со снежными вершинами
+  for (const m of mountains) {
+    const x = ((m.x - mtnOff) % MTN_SPAN + MTN_SPAN) % MTN_SPAN - 200;
+    ctx.fillStyle = "#93a5bb";
+    ctx.beginPath();
+    ctx.moveTo(x, GROUND + 2);
+    ctx.lineTo(x + m.w / 2, GROUND + 2 - m.h);
+    ctx.lineTo(x + m.w, GROUND + 2);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#eef3f8";
+    const capW = m.w * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(x + m.w / 2, GROUND + 2 - m.h);
+    ctx.lineTo(x + m.w / 2 - capW, GROUND + 2 - m.h + m.h * 0.26);
+    ctx.lineTo(x + m.w / 2 - capW * 0.3, GROUND + 2 - m.h + m.h * 0.2);
+    ctx.lineTo(x + m.w / 2 + capW * 0.4, GROUND + 2 - m.h + m.h * 0.28);
+    ctx.lineTo(x + m.w / 2 + capW, GROUND + 2 - m.h + m.h * 0.24);
+    ctx.closePath(); ctx.fill();
+  }
+  // зелёные холмы
+  ctx.fillStyle = "#a9b56b";
+  for (const hill of hillsNear) {
+    const x = ((hill.x - hillOff) % MTN_SPAN + MTN_SPAN) % MTN_SPAN - 200;
+    ctx.beginPath();
+    ctx.ellipse(x, GROUND + 2, hill.w / 2, hill.h, 0, Math.PI, 0);
+    ctx.fill();
+  }
+  // степная трава
+  ctx.fillStyle = "#c2bb6f";
+  ctx.fillRect(-10, GROUND + 2, W + 20, H - GROUND + 10);
+  ctx.fillStyle = "#98915a";
+  ctx.fillRect(-10, GROUND + 2, W + 20, 2);
+  if (G.state === "run") groundOffset = (groundOffset + G.speed * dt) % W;
+  for (const t of tufts) {
+    let x = t.x - groundOffset;
+    if (x < -30) x += W;
+    const y = GROUND + 10 + (t.w % 3) * 5;
+    if (t.kind < 0.6) { // пучок травы
+      ctx.fillStyle = "#7f9c4e";
+      ctx.fillRect(Math.round(x), y - 3, 2, 5);
+      ctx.fillRect(Math.round(x) + 3, y - 5, 2, 7);
+      ctx.fillRect(Math.round(x) + 6, y - 2, 2, 4);
+    } else if (t.kind < 0.9) { // камешек
+      ctx.fillStyle = "#a89a72";
+      ctx.fillRect(Math.round(x), y, t.w, 2);
+    } else { // красный мак
+      ctx.fillStyle = "#c0392b";
+      ctx.fillRect(Math.round(x), y - 4, 3, 3);
+      ctx.fillStyle = "#7f9c4e";
+      ctx.fillRect(Math.round(x) + 1, y - 1, 1, 3);
+    }
+  }
+}
+
+function drawNightSky(n) {
+  if (n < 0.02) return;
+  ctx.globalAlpha = n;
+  ctx.fillStyle = "#e8e8f0";
+  for (const s of stars) ctx.fillRect(s.x, s.y, s.r, s.r);
+  ctx.beginPath(); ctx.arc(W - 130, 60, 22, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = mix(SKY_DAY_TOP, SKY_NIGHT_TOP, n);
+  ctx.beginPath(); ctx.arc(W - 122, 54, 20, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- счёт ---------- */
+function drawScore(fg) {
+  ctx.fillStyle = fg;
+  ctx.font = "bold 18px 'Courier New', monospace";
+  ctx.textAlign = "right";
+  const s = String(Math.floor(G.score)).padStart(5, "0");
+  const hi = String(Math.floor(G.hi)).padStart(5, "0");
+  if (G.milestoneFlash > 0) {
+    G.milestoneFlash--;
+    if ((G.milestoneFlash / 6 | 0) % 2 === 0) ctx.fillText(s, W - 20, 32);
+  } else {
+    ctx.fillText(s, W - 20, 32);
+  }
+  ctx.globalAlpha = 0.6;
+  ctx.fillText("HI " + hi, W - 120, 32);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- главный цикл ---------- */
+let lastTime = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!lastTime) lastTime = ts;
+  const dtMs = Math.min(ts - lastTime, 50);
+  lastTime = ts;
+  frame(dtMs, ts);
+}
+function frame(dtMs, ts) {
+  const dt = dtMs / (1000 / 60);
+
+  if (G.state === "pause") return;
+
+  if (G.state === "run") {
+    G.cycleTimer += dtMs;
+    if (G.cycleTimer >= 25000) { G.isNight = !G.isNight; G.cycleTimer = 0; }
+  }
+  const target = G.isNight ? 1 : 0;
+  G.nightAmount += (target - G.nightAmount) * Math.min(1, dtMs / 900);
+
+  const bg = mix(SKY_DAY_BOT, SKY_NIGHT_BOT, G.nightAmount);
+  const fg = mix(DAY_FG, NIGHT_FG, G.nightAmount);
+  document.documentElement.style.setProperty("--bg", bg);
+  document.documentElement.style.setProperty("--fg", fg);
+
+  if (G.state === "run") {
+    const prevScore = G.score;
+    G.score += 0.15 * dt;
+    G.speed = Math.min(14, G.speed + 0.0006 * dtMs);
+    if (Math.floor(G.score / 100) > Math.floor(prevScore / 100)) {
+      G.milestoneFlash = 40;
+      sound.milestone();
+    }
+    rider.update(dt);
+  }
+
+  ctx.save();
+  if (G.shake > 0) {
+    G.shake -= dt;
+    ctx.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
+  }
+  drawSky(G.nightAmount);
+  drawScenery(dt);
+  if (G.state === "run") {
+    updateObstacles(dt);
+    if (collides()) gameOver();
+  } else {
+    for (const o of obstacles) drawObstacle(o);
+  }
+  rider.draw();
+  if (G.nightAmount > 0.01) {
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = mix([255, 255, 255], [118, 124, 168], G.nightAmount);
+    ctx.fillRect(-10, -10, W + 20, H + 20);
+    ctx.globalCompositeOperation = "source-over";
+  }
+  drawNightSky(G.nightAmount);
+  drawScore(fg);
+  if (G.state === "idle") {
+    ctx.fillStyle = fg;
+    ctx.font = "bold 20px 'Courier New', monospace";
+    ctx.textAlign = "center";
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(ts / 350);
+    ctx.fillText("НАЖМИ, ЧТОБЫ НАЧАТЬ", W / 2, H / 2 - 20);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+requestAnimationFrame(loop);
+
+/* ---------- состояния ---------- */
+function startRun() {
+  G.state = "run";
+  G.score = 0;
+  G.speed = 6.5;
+  G.cycleTimer = 0;
+  G.isNight = false;
+  G.newRecord = false;
+  obstacles.length = 0;
+  nextGap = 550;
+  rider.y = GROUND; rider.vy = 0; rider.jumping = false; rider.ducking = false;
+  panelOver.classList.remove("show");
+}
+
+function gameOver() {
+  G.state = "over";
+  G.shake = 10;
+  sound.hit();
+  if (G.score > G.hi) {
+    G.hi = G.score;
+    G.newRecord = true;
+    storage.save(Math.floor(G.hi));
+  }
+  overScore.textContent = `СЧЁТ ${Math.floor(G.score)}  ·  РЕКОРД ${Math.floor(G.hi)}`;
+  overRecord.style.display = G.newRecord ? "" : "none";
+  setTimeout(() => panelOver.classList.add("show"), 350);
+}
+
+function togglePause() {
+  if (G.state === "run") {
+    G.state = "pause";
+    panelPause.classList.add("show");
+  } else if (G.state === "pause") {
+    G.state = "run";
+    lastTime = 0;
+    panelPause.classList.remove("show");
+  }
+}
+
+/* ---------- ввод ---------- */
+const panelOver = document.getElementById("panelOver");
+const panelPause = document.getElementById("panelPause");
+const overScore = document.getElementById("overScore");
+const overRecord = document.getElementById("overRecord");
+const btnMute = document.getElementById("btnMute");
+btnMute.textContent = sound.muted ? "🔇" : "🔊";
+
+function pressJump() {
+  sound.ensure();
+  if (G.state === "idle") { startRun(); rider.jump(); }
+  else if (G.state === "run") rider.jump();
+  else if (G.state === "over" && panelOver.classList.contains("show")) startRun();
+}
+
+addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  if (["Space", "ArrowUp", "KeyW"].includes(e.code)) { e.preventDefault(); pressJump(); }
+  else if (["ArrowDown", "KeyS"].includes(e.code)) { e.preventDefault(); if (G.state === "run") rider.ducking = true; }
+  else if (e.code === "KeyP") togglePause();
+  else if (e.code === "KeyM") toggleMute();
+});
+addEventListener("keyup", (e) => {
+  if (["Space", "ArrowUp", "KeyW"].includes(e.code)) rider.cutJump();
+  else if (["ArrowDown", "KeyS"].includes(e.code)) rider.ducking = false;
+});
+
+let duckPointer = null;
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  sound.ensure();
+  const rect = cv.getBoundingClientRect();
+  const yFrac = (e.clientY - rect.top) / rect.height;
+  if (G.state === "run" && yFrac > 0.72 && e.pointerType !== "mouse") {
+    rider.ducking = true;
+    duckPointer = e.pointerId;
+  } else {
+    pressJump();
+  }
+});
+addEventListener("pointerup", (e) => {
+  if (e.pointerId === duckPointer) { rider.ducking = false; duckPointer = null; }
+  else rider.cutJump();
+});
+
+document.getElementById("btnRestart").addEventListener("click", (e) => { e.stopPropagation(); startRun(); });
+function toggleMute() {
+  sound.muted = !sound.muted;
+  storage.saveMute(sound.muted);
+  btnMute.textContent = sound.muted ? "🔇" : "🔊";
+}
+btnMute.addEventListener("click", (e) => { e.stopPropagation(); toggleMute(); });
+
+/* debug: #demo — автостарт, #night, #duck, #ffN — промотать N кадров,
+   #only-yurt|tiger|sheep|eagle|bush — спавнить только этот тип */
+let FORCE_KIND = null;
+if (location.hash.includes("demo")) {
+  const kinds = ["yurt", "tiger", "sheep", "eagle", "bush"];
+  for (const k of kinds) if (location.hash.includes("only-" + k)) FORCE_KIND = k;
+  startRun();
+  G.score = 500; // все типы препятствий разблокированы
+  if (location.hash.includes("night")) { G.isNight = true; G.nightAmount = 1; }
+  if (location.hash.includes("duck")) rider.ducking = true;
+  const ff = /ff(\d+)/.exec(location.hash);
+  if (ff) for (let i = 0; i < +ff[1]; i++) frame(16.7, i * 16.7);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && G.state === "run") togglePause();
+});
+</script>
+</body>
+</html>
