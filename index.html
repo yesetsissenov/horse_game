@@ -481,18 +481,16 @@ rider = {
     }
   },
   spriteSize() {
-    const width = W === 480 ? 224 : 182;
+    const width = W === 480 ? 170 : 145;
     return { width, height: width * 480 / 543 };
   },
   hitbox() {
     const size = this.spriteSize();
-    const topOffset = this.ducking && !this.jumping
-      ? (W === 480 ? 108 : 88)
-      : (W === 480 ? 158 : 126);
+    const topOffset = Math.round(size.height * (this.ducking && !this.jumping ? .55 : .8));
     return {
       x: this.x - (W === 480 ? 6 : 0),
       y: this.y - topOffset,
-      w: size.width - (W === 480 ? 50 : 46),
+      w: Math.round(size.width * .76),
       h: topOffset - 5,
     };
   },
