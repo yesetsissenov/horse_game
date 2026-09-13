@@ -47,6 +47,24 @@ try {
   assert(!(await desktop.locator("#touchControls").isVisible()), "Touch controls must stay hidden on desktop");
   assert((await desktop.evaluate(() => window.__batyrGame.viewport)).width === 900, "Desktop logical viewport must be 900 pixels wide");
   await desktop.screenshot({ path: path.join(results, "desktop.png") });
+
+  await desktop.goto(`${base}/index.html?scene=world-scale#demo-only-yurt-ff130`, { waitUntil: "load" });
+  await desktop.waitForFunction(() => window.__batyrGame.spriteReady && window.__batyrGame.obstacles.some(({ kind }) => kind === "yurt"));
+  const worldScale = await desktop.evaluate(() => ({
+    rider: window.__batyrGame.rider,
+    yurt: window.__batyrGame.obstacles.find(({ kind }) => kind === "yurt"),
+  }));
+  assert(worldScale.yurt.w > worldScale.rider.spriteWidth, "A yurt must be wider than the horse and rider");
+  assert(worldScale.yurt.h > worldScale.rider.spriteHeight, "A yurt must be taller than the horse and rider");
+  await desktop.screenshot({ path: path.join(results, "world-scale.png") });
+  await desktop.waitForFunction(() => window.__batyrGame.obstacles.some(({ kind, x }) => kind === "yurt" && x < 200 && x > 120));
+  await desktop.keyboard.down("Space");
+  await desktop.waitForFunction(() => {
+    const yurt = window.__batyrGame.obstacles.find(({ kind }) => kind === "yurt");
+    return window.__batyrGame.state !== "run" || (yurt && yurt.x + yurt.w < 20);
+  });
+  await desktop.keyboard.up("Space");
+  assert((await desktop.evaluate(() => window.__batyrGame.state)) === "run", "A held high jump must clear a full-size yurt");
   await desktop.close();
 
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
@@ -90,7 +108,7 @@ try {
   await landscapeContext.close();
 
   assert(errors.length === 0, `Browser errors: ${errors.join(" | ")}`);
-  console.log("Browser smoke OK: desktop, portrait phone, landscape phone, jump, duck and pause.");
+  console.log("Browser smoke OK: natural horse/yurt scale, yurt jump, desktop, portrait phone, landscape phone, duck and pause.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

@@ -458,7 +458,7 @@ rider = {
   animT: 0,
   jump() {
     if (!this.jumping) {
-      this.vy = -16;
+      this.vy = -17;
       this.jumping = true;
       this.ducking = false;
       sound.jump();
@@ -469,7 +469,7 @@ rider = {
   },
   update(dt) {
     if (this.jumping) {
-      this.vy += 0.82 * dt * (this.ducking ? 2.2 : 1);
+      this.vy += 0.72 * dt * (this.ducking ? 2.2 : 1);
       this.y += this.vy * dt;
       if (this.y >= GROUND) { this.y = GROUND; this.vy = 0; this.jumping = false; }
     }
@@ -481,7 +481,7 @@ rider = {
     }
   },
   spriteSize() {
-    const width = W === 480 ? 170 : 145;
+    const width = W === 480 ? 120 : 112;
     return { width, height: width * 480 / 543 };
   },
   hitbox() {
@@ -496,7 +496,7 @@ rider = {
   },
   draw() {
     const size = this.spriteSize();
-    const spriteX = this.x - (W === 480 ? 24 : 18);
+    const spriteX = this.x - (W === 480 ? 14 : 12);
     const bodyTop = this.y - 21 * PXH;
     ctx.globalAlpha = this.jumping ? .12 : .22;
     ctx.fillStyle = "#4d442f";
@@ -554,8 +554,8 @@ function spawnObstacle(force) {
   } else if (kind === "tiger") {
     obstacles.push({ kind, x: W + 30, y: GROUND, w: 26 * PXH, h: 10 * PXH, frame: 0, animT: 0 });
   } else if (kind === "yurt") {
-    const w = 88 + Math.random() * 20;
-    obstacles.push({ kind, x: W + 30, y: GROUND, w, h: 52 + Math.random() * 10 });
+    const w = 180 + Math.random() * 25;
+    obstacles.push({ kind, x: W + 30, y: GROUND, w, h: 110 + Math.random() * 12 });
     nextGap += 100;
   } else if (kind === "sheep") {
     const count = 1 + Math.floor(Math.random() * 3);
@@ -1016,7 +1016,11 @@ document.addEventListener("visibilitychange", () => {
 window.__batyrGame = {
   get state() { return G.state; },
   get viewport() { return { width: W, height: H, ground: GROUND }; },
-  get rider() { return { jumping: rider.jumping, ducking: rider.ducking, frame: rider.frame, y: rider.y }; },
+  get rider() {
+    const size = rider.spriteSize();
+    return { jumping: rider.jumping, ducking: rider.ducking, frame: rider.frame, y: rider.y, spriteWidth: size.width, spriteHeight: size.height };
+  },
+  get obstacles() { return obstacles.map(({ kind, x, y, w, h }) => ({ kind, x, y, w, h })); },
   get spriteReady() { return batyrSpriteReady; },
 };
 </script>
