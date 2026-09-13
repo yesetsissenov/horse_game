@@ -16,7 +16,8 @@ const server = createServer((request, response) => {
     response.writeHead(404).end("Not found");
     return;
   }
-  response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  const contentTypes = { ".html": "text/html; charset=utf-8", ".png": "image/png" };
+  response.writeHead(200, { "Content-Type": contentTypes[path.extname(filename)] || "application/octet-stream", "Cache-Control": "no-store" });
   fs.createReadStream(filename).pipe(response);
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -40,6 +41,7 @@ try {
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   monitor(desktop);
   await desktop.goto(`${base}/index.html#demo`, { waitUntil: "load" });
+  await desktop.waitForFunction(() => window.__batyrGame.spriteReady);
   const desktopStage = await desktop.locator("#stage").boundingBox();
   assert(desktopStage && desktopStage.width / desktopStage.height > 2.9, "Desktop stage must keep its wide layout");
   assert(!(await desktop.locator("#touchControls").isVisible()), "Touch controls must stay hidden on desktop");
@@ -51,6 +53,7 @@ try {
   const phone = await phoneContext.newPage();
   monitor(phone);
   await phone.goto(`${base}/index.html`, { waitUntil: "load" });
+  await phone.waitForFunction(() => window.__batyrGame.spriteReady);
   const stage = await phone.locator("#stage").boundingBox();
   const jump = await phone.locator("#btnJump").boundingBox();
   const duck = await phone.locator("#btnDuck").boundingBox();
@@ -76,6 +79,7 @@ try {
   const landscape = await landscapeContext.newPage();
   monitor(landscape);
   await landscape.goto(`${base}/index.html#demo`, { waitUntil: "load" });
+  await landscape.waitForFunction(() => window.__batyrGame.spriteReady);
   const landscapeStage = await landscape.locator("#stage").boundingBox();
   const landscapeControls = await landscape.locator("#touchControls").boundingBox();
   assert(landscapeStage && landscapeControls, "Landscape controls must be visible");

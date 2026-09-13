@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Batyr Runner</title>
+<link rel="preload" as="image" href="assets/batyr-horse-sprites.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐎</text></svg>">
 <style>
   :root {
@@ -209,6 +210,10 @@ let rider = null;
 const cv = document.getElementById("game");
 const ctx = cv.getContext("2d");
 const stage = document.getElementById("stage");
+const batyrSprite = new Image();
+let batyrSpriteReady = false;
+batyrSprite.addEventListener("load", () => { batyrSpriteReady = true; });
+batyrSprite.src = "assets/batyr-horse-sprites.png";
 
 function fit() {
   const oldGround = GROUND;
@@ -471,26 +476,52 @@ rider = {
     this.animT += dt;
     if (this.animT > 5) {
       this.animT = 0;
-      this.frame ^= 1;
+      this.frame = (this.frame + 1) % 4;
       if (!this.jumping && G.state === "run") kickDust();
     }
   },
+  spriteSize() {
+    const width = W === 480 ? 224 : 182;
+    return { width, height: width * 480 / 543 };
+  },
   hitbox() {
-    // конь + всадник; при пригибании верх ниже
-    const topOffset = this.ducking && !this.jumping ? 16 * PXH : 30 * PXH;
-    return { x: this.x + 5 * PXH, y: this.y - topOffset, w: 29 * PXH, h: topOffset - 3 };
+    const size = this.spriteSize();
+    const topOffset = this.ducking && !this.jumping
+      ? (W === 480 ? 108 : 88)
+      : (W === 480 ? 158 : 126);
+    return {
+      x: this.x - (W === 480 ? 6 : 0),
+      y: this.y - topOffset,
+      w: size.width - (W === 480 ? 50 : 46),
+      h: topOffset - 5,
+    };
   },
   draw() {
+    const size = this.spriteSize();
+    const spriteX = this.x - (W === 480 ? 24 : 18);
     const bodyTop = this.y - 21 * PXH;
-    const riderScale = PXH * 1.18;
-    const legs = this.jumping ? HORSE_LEGS_A
-      : (G.state === "run" ? (this.frame ? HORSE_LEGS_A : HORSE_LEGS_B) : HORSE_LEGS_B);
     ctx.globalAlpha = this.jumping ? .12 : .22;
     ctx.fillStyle = "#4d442f";
     ctx.beginPath();
-    ctx.ellipse(this.x + 18 * PXH, GROUND + 2, this.jumping ? 12 * PXH : 18 * PXH, this.jumping ? 2 : 3.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(spriteX + size.width * .52, GROUND + 2, this.jumping ? size.width * .3 : size.width * .42, this.jumping ? 2 : 3.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+
+    if (batyrSpriteReady) {
+      const frameWidth = batyrSprite.naturalWidth / 4;
+      const frame = this.jumping ? 0 : (G.state === "run" ? this.frame : 2);
+      ctx.drawImage(
+        batyrSprite,
+        frame * frameWidth, 120, frameWidth, 480,
+        Math.round(spriteX), Math.round(this.y - size.height + 5),
+        Math.round(size.width), Math.round(size.height),
+      );
+      return;
+    }
+
+    const riderScale = PXH * 1.18;
+    const legs = this.jumping ? HORSE_LEGS_A
+      : (G.state === "run" ? (this.frame % 2 ? HORSE_LEGS_A : HORSE_LEGS_B) : HORSE_LEGS_B);
     drawSprite(HORSE_BODY, this.x, bodyTop, PAL_HORSE);
     drawSprite(legs, this.x, bodyTop + 14 * PXH, PAL_HORSE);
     ctx.fillStyle = "#e6c264";
@@ -987,7 +1018,8 @@ document.addEventListener("visibilitychange", () => {
 window.__batyrGame = {
   get state() { return G.state; },
   get viewport() { return { width: W, height: H, ground: GROUND }; },
-  get rider() { return { jumping: rider.jumping, ducking: rider.ducking, y: rider.y }; },
+  get rider() { return { jumping: rider.jumping, ducking: rider.ducking, frame: rider.frame, y: rider.y }; },
+  get spriteReady() { return batyrSpriteReady; },
 };
 </script>
 </body>
