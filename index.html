@@ -13,32 +13,41 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     height: 100%;
+    min-height: 100%;
     background: var(--bg);
     transition: background .8s;
     font-family: "Courier New", Courier, monospace;
     overflow: hidden;
-    touch-action: manipulation;
+    touch-action: none;
+    overscroll-behavior: none;
     -webkit-user-select: none; user-select: none;
   }
   #wrap {
-    height: 100%;
+    min-height: 100vh;
+    min-height: 100svh;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 14px;
-    padding: 10px;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
   }
   #stage {
     position: relative;
     width: 100%;
     max-width: 900px;
+    aspect-ratio: 3 / 1;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border-radius: 8px;
   }
   canvas {
     display: block;
     width: 100%;
+    height: 100%;
     image-rendering: pixelated;
     cursor: pointer;
+    touch-action: none;
   }
   #hint {
     color: var(--fg);
@@ -48,6 +57,7 @@
     text-align: center;
     transition: color .8s;
   }
+  .mobileHint { display: none; }
   .panel {
     position: absolute;
     inset: 0;
@@ -95,6 +105,42 @@
     transition: color .8s;
     z-index: 5;
   }
+  #btnPause {
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 42px; height: 42px;
+    display: grid;
+    place-items: center;
+    border: 2px solid currentColor;
+    border-radius: 8px;
+    background: rgba(235, 244, 239, .72);
+    color: var(--fg);
+    font: bold 18px/1 "Courier New", monospace;
+    cursor: pointer;
+    z-index: 6;
+    transition: color .8s, background .2s;
+  }
+  #btnPause:active { transform: translateY(1px); background: rgba(255,255,255,.92); }
+  #touchControls {
+    display: none;
+    width: min(100%, 620px);
+    gap: 10px;
+  }
+  .touchButton {
+    min-height: 76px;
+    border: 3px solid currentColor;
+    border-radius: 12px;
+    background: rgba(255,255,255,.58);
+    color: var(--fg);
+    box-shadow: 0 5px 0 rgba(90,84,70,.22);
+    font: 900 15px/1 "Courier New", monospace;
+    letter-spacing: 1px;
+    touch-action: none;
+  }
+  .touchButton strong { display: block; margin-bottom: 7px; font-size: 25px; line-height: .8; }
+  .touchButton:active, .touchButton.active { transform: translateY(3px); box-shadow: 0 2px 0 rgba(90,84,70,.22); background: rgba(255,255,255,.88); }
+  #btnJump { flex: 1.2; }
+  #btnDuck { flex: 1; }
   #btnMute:hover { opacity: .9; }
   .newRecord {
     font-size: 13px;
@@ -102,13 +148,35 @@
     animation: blink 1s steps(2) infinite;
   }
   @keyframes blink { 50% { opacity: 0; } }
+
+  @media (pointer: coarse), (max-width: 760px) {
+    #wrap { justify-content: center; gap: 10px; }
+    #stage { width: min(100%, 620px); max-width: none; }
+    #touchControls { display: flex; }
+    #hint { min-height: 18px; font-size: 11px; letter-spacing: .25px; opacity: .7; }
+    .desktopHint { display: none; }
+    .mobileHint { display: inline; }
+    .panel { padding: 22px; text-align: center; }
+    .panel h1 { letter-spacing: 3px; }
+    .panel button { min-height: 52px; padding-inline: 30px; }
+    #btnMute { width: 44px; height: 44px; font-size: 20px; opacity: .72; }
+  }
+
+  @media (pointer: coarse) and (orientation: landscape) and (max-height: 520px) {
+    #wrap { flex-direction: row; justify-content: center; gap: 10px; }
+    #stage { width: min(calc(100vw - 188px), 720px); max-height: calc(100svh - 16px); }
+    #touchControls { width: 168px; height: min(100%, 270px); flex-direction: column; }
+    .touchButton { min-height: 0; flex: 1; }
+    #hint { display: none; }
+  }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="stage">
     <canvas id="game"></canvas>
-    <button id="btnMute" title="Звук (M)">🔊</button>
+    <button id="btnMute" type="button" title="Звук (M)" aria-label="Включить или выключить звук">🔊</button>
+    <button id="btnPause" type="button" title="Пауза (P)" aria-label="Пауза">Ⅱ</button>
     <div class="panel" id="panelOver">
       <h1>G A M E&nbsp;&nbsp;O V E R</h1>
       <div class="sub" id="overScore"></div>
@@ -117,10 +185,15 @@
     </div>
     <div class="panel" id="panelPause">
       <h1>ПАУЗА</h1>
-      <div class="sub">P — продолжить</div>
+      <div class="sub">Отдохните перед следующим препятствием</div>
+      <button id="btnContinue" type="button">ПРОДОЛЖИТЬ</button>
     </div>
   </div>
-  <div id="hint">SPACE / ↑ / тап — прыжок&nbsp;&nbsp;·&nbsp;&nbsp;↓ — пригнуться под беркутом&nbsp;&nbsp;·&nbsp;&nbsp;P — пауза</div>
+  <div id="touchControls" aria-label="Управление игрой">
+    <button class="touchButton" id="btnJump" type="button"><strong>↑</strong>ПРЫЖОК</button>
+    <button class="touchButton" id="btnDuck" type="button"><strong>↓</strong>ПРИГНУТЬСЯ</button>
+  </div>
+  <div id="hint"><span class="desktopHint">SPACE / ↑ — прыжок&nbsp;&nbsp;·&nbsp;&nbsp;↓ — пригнуться&nbsp;&nbsp;·&nbsp;&nbsp;P — пауза</span><span class="mobileHint">Удерживайте кнопку для высокого прыжка или пригибания</span></div>
 </div>
 
 <script>
@@ -131,17 +204,36 @@
    беркутами пригибается. Один файл, без зависимостей.
    ============================================================ */
 
-const W = 900, H = 300, GROUND = 252;
+let W = 900, H = 300, GROUND = 252, PXH = 2.2, MTN_SPAN = 1300;
+let rider = null;
 const cv = document.getElementById("game");
 const ctx = cv.getContext("2d");
+const stage = document.getElementById("stage");
 
 function fit() {
+  const oldGround = GROUND;
+  const coarse = matchMedia("(pointer: coarse)").matches || innerWidth <= 760;
+  const portrait = coarse && innerHeight >= innerWidth * .82;
+  if (portrait) {
+    W = 480; H = 540; GROUND = 486; PXH = 3;
+  } else if (coarse) {
+    W = 720; H = 300; GROUND = 252; PXH = 2.6;
+  } else {
+    W = 900; H = 300; GROUND = 252; PXH = 2.2;
+  }
+  stage.style.aspectRatio = `${W} / ${H}`;
+  MTN_SPAN = W + 400;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  cv.width = W * dpr;
-  cv.height = H * dpr;
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cv.style.height = "auto";
+  cv.style.height = "100%";
   ctx.imageSmoothingEnabled = false;
+  if (rider) {
+    rider.x = portrait ? 34 : 60;
+    rider.y = rider.jumping ? rider.y + GROUND - oldGround : GROUND;
+    for (const obstacle of obstacles) obstacle.y += GROUND - oldGround;
+  }
 }
 fit();
 addEventListener("resize", fit);
@@ -179,47 +271,47 @@ const sound = {
 };
 
 /* ---------- спрайты ----------
-   h конь, H тёмное (грива/хвост/копыта), m морда, p глаз,
+   h конь, a блик шерсти, d тень, H грива/хвост/копыта,
+   m морда, p глаз, r уздечка,
    s седло, k калпак, f лицо, c чапан, C тёмный чапан,
    w шерсть, W тень шерсти, d тёмная голова, n рог,
    o тигр, b полоса, l живот, O тёмно-рыжий,
    e беркут, E крыло, g золотая голова, y клюв */
 
-const PXH = 2.2;
-
 const HORSE_BODY = [
-  "..........................H.H....",
-  ".........................hhhhh...",
-  "........................Hhphhh...",
-  "........................Hhhhhhm..",
-  "........................Hhhhhmm..",
-  ".......................Hhhhhh....",
-  "HH....................Hhhhh......",
-  ".HH..................Hhhhh.......",
-  ".HHH....ssssss......hhhhh........",
-  "..HHhhhhsssssshhhhhhhhhh.........",
-  "..HHhhhhhhhhhhhhhhhhhhhh.........",
-  "...Hhhhhhhhhhhhhhhhhhhh..........",
-  "...hhhhhhhhhhhhhhhhhhh...........",
-  "....hhhhhhhhhhhhhhhhhh...........",
+  "............................H.H.....",
+  "...........................HhhhH....",
+  "..........................Hhhphhr...",
+  ".........................HHhhhrrmm..",
+  "........................HHhhhhhmmm..",
+  ".......................HHhhhhhhh....",
+  "HH....................HHhhhhhh......",
+  "HHH..................HHhhhhhh.......",
+  ".HHH....sssssss.....Hhhhhhhh........",
+  "..HHhhhhssssssshhhhhhhhhhhhh........",
+  "..Hhhhhaaaaaaaaaahhhhhhhddd.........",
+  "...hhhaaaaaaaaaaaahhhhdddd..........",
+  "...hhhaaaaaaaaaaahhhddddd...........",
+  "....hhhaaaaaaaaahhdddd..............",
+  ".....ddddddddddddddd................",
 ];
 const HORSE_LEGS_A = [ // галоп: ноги вытянуты
-  "....hh..............hhh..........",
-  "....Hhh..............hhh.........",
-  "...Hhh................hhh........",
-  "..Hh....................hh.......",
-  ".Hh......................hh......",
-  ".H........................hh.....",
-  "..........................HH.....",
+  ".....hh..................hhh.........",
+  ".....dh....................hh........",
+  "....dd......................hh.......",
+  "...dd........................dh......",
+  "..dd.........................dd......",
+  ".d............................d.......",
+  "HH............................HH......",
 ];
 const HORSE_LEGS_B = [ // галоп: ноги собраны
-  "......hh...........hh............",
-  ".......hh..........hhh...........",
-  ".......Hhh..........hh...........",
-  "........Hh..........Hh...........",
-  ".........H...........H...........",
-  ".................................",
-  ".................................",
+  ".......hh...............hh...........",
+  "........hd.............dh............",
+  ".........dd...........dd.............",
+  "..........dH.........Hd..............",
+  "..........H...........H..............",
+  ".........HH...........HH.............",
+  ".....................................",
 ];
 const RIDER = [
   "....kkk.....",
@@ -287,7 +379,7 @@ const EAGLE_FRAMES = [
 ];
 
 const PAL_HORSE = {
-  h: "#8a5a33", H: "#5b3a20", m: "#c9a179", p: "#221a12", s: "#b03a3a",
+  h: "#995d32", a: "#c78148", d: "#71411f", H: "#432b1b", m: "#c99a6d", p: "#17110d", r: "#3d271b", s: "#a93637",
   k: "#f2ede0", f: "#e0b284", c: "#3566a8", C: "#274d82",
 };
 const PAL_SHEEP = { w: "#ece4d2", W: "#b5aa93", d: "#4a3f38", n: "#c69a55", p: "#f5f2ea" };
@@ -320,7 +412,39 @@ const G = {
   newRecord: false,
 };
 
-const rider = {
+const hoofDust = [];
+
+function kickDust() {
+  for (let index = 0; index < 3; index++) {
+    hoofDust.push({
+      x: rider.x + randomBetween(4, 25) * PXH,
+      y: GROUND - randomBetween(0, 3),
+      vx: randomBetween(-2.4, -.7),
+      vy: randomBetween(-1.4, -.35),
+      life: randomBetween(12, 22),
+      size: randomBetween(2, 4),
+    });
+  }
+}
+
+function randomBetween(min, max) { return min + Math.random() * (max - min); }
+
+function updateDust(dt) {
+  for (let index = hoofDust.length - 1; index >= 0; index--) {
+    const particle = hoofDust[index];
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    particle.vy += .08 * dt;
+    particle.life -= dt;
+    if (particle.life <= 0) { hoofDust.splice(index, 1); continue; }
+    ctx.globalAlpha = Math.min(.42, particle.life / 18);
+    ctx.fillStyle = "#9b8158";
+    ctx.fillRect(Math.round(particle.x), Math.round(particle.y), particle.size, particle.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+rider = {
   x: 60, y: GROUND,
   vy: 0,
   jumping: false,
@@ -345,23 +469,37 @@ const rider = {
       if (this.y >= GROUND) { this.y = GROUND; this.vy = 0; this.jumping = false; }
     }
     this.animT += dt;
-    if (this.animT > 6) { this.animT = 0; this.frame ^= 1; }
+    if (this.animT > 5) {
+      this.animT = 0;
+      this.frame ^= 1;
+      if (!this.jumping && G.state === "run") kickDust();
+    }
   },
   hitbox() {
     // конь + всадник; при пригибании верх ниже
-    const topOffset = this.ducking && !this.jumping ? 15 * PXH : 24 * PXH;
-    return { x: this.x + 8, y: this.y - topOffset, w: 26 * PXH - 4, h: topOffset - 4 };
+    const topOffset = this.ducking && !this.jumping ? 16 * PXH : 30 * PXH;
+    return { x: this.x + 5 * PXH, y: this.y - topOffset, w: 29 * PXH, h: topOffset - 3 };
   },
   draw() {
     const bodyTop = this.y - 21 * PXH;
+    const riderScale = PXH * 1.18;
     const legs = this.jumping ? HORSE_LEGS_A
       : (G.state === "run" ? (this.frame ? HORSE_LEGS_A : HORSE_LEGS_B) : HORSE_LEGS_B);
+    ctx.globalAlpha = this.jumping ? .12 : .22;
+    ctx.fillStyle = "#4d442f";
+    ctx.beginPath();
+    ctx.ellipse(this.x + 18 * PXH, GROUND + 2, this.jumping ? 12 * PXH : 18 * PXH, this.jumping ? 2 : 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
     drawSprite(HORSE_BODY, this.x, bodyTop, PAL_HORSE);
     drawSprite(legs, this.x, bodyTop + 14 * PXH, PAL_HORSE);
+    ctx.fillStyle = "#e6c264";
+    ctx.fillRect(Math.round(this.x + 12 * PXH), Math.round(bodyTop + 10 * PXH), Math.ceil(PXH), Math.ceil(PXH));
+    ctx.fillRect(Math.round(this.x + 15 * PXH), Math.round(bodyTop + 10 * PXH), Math.ceil(PXH), Math.ceil(PXH));
     if (this.ducking && !this.jumping)
-      drawSprite(RIDER_DUCK, this.x + 9 * PXH, bodyTop - 3 * PXH, PAL_HORSE, 2.6);
+      drawSprite(RIDER_DUCK, this.x + 9 * PXH, bodyTop - 3 * PXH, PAL_HORSE, riderScale);
     else
-      drawSprite(RIDER, this.x + 9 * PXH, bodyTop - 9 * PXH, PAL_HORSE, 2.6);
+      drawSprite(RIDER, this.x + 9 * PXH, bodyTop - 9 * PXH, PAL_HORSE, riderScale);
   },
 };
 
@@ -508,7 +646,6 @@ let groundOffset = 0;
 const tufts = Array.from({ length: 46 }, () => ({ x: Math.random() * W, w: 4 + Math.random() * 10, kind: Math.random() }));
 const clouds = Array.from({ length: 4 }, () => ({ x: Math.random() * W, y: 36 + Math.random() * 80, s: 0.55 + Math.random() * 0.5 }));
 const stars = Array.from({ length: 26 }, () => ({ x: Math.random() * W, y: 10 + Math.random() * 140, r: Math.random() < 0.3 ? 2 : 1 }));
-const MTN_SPAN = W + 400;
 const mountains = Array.from({ length: 6 }, (_, i) => ({ x: i * 220 + Math.random() * 100, w: 200 + Math.random() * 160, h: 52 + Math.random() * 40 }));
 const hillsNear = Array.from({ length: 5 }, (_, i) => ({ x: i * 240 + Math.random() * 100, w: 200 + Math.random() * 150, h: 12 + Math.random() * 14 }));
 let mtnOff = 0, hillOff = 0;
@@ -620,16 +757,17 @@ function drawScore(fg) {
   ctx.fillStyle = fg;
   ctx.font = "bold 18px 'Courier New', monospace";
   ctx.textAlign = "right";
+  const scoreRight = W < 800 ? 82 : 70;
   const s = String(Math.floor(G.score)).padStart(5, "0");
   const hi = String(Math.floor(G.hi)).padStart(5, "0");
   if (G.milestoneFlash > 0) {
     G.milestoneFlash--;
-    if ((G.milestoneFlash / 6 | 0) % 2 === 0) ctx.fillText(s, W - 20, 32);
+    if ((G.milestoneFlash / 6 | 0) % 2 === 0) ctx.fillText(s, W - scoreRight, 32);
   } else {
-    ctx.fillText(s, W - 20, 32);
+    ctx.fillText(s, W - scoreRight, 32);
   }
   ctx.globalAlpha = 0.6;
-  ctx.fillText("HI " + hi, W - 120, 32);
+  ctx.fillText("HI " + hi, W - scoreRight - 105, 32);
   ctx.globalAlpha = 1;
 }
 
@@ -683,6 +821,7 @@ function frame(dtMs, ts) {
   } else {
     for (const o of obstacles) drawObstacle(o);
   }
+  updateDust(dt);
   rider.draw();
   if (G.nightAmount > 0.01) {
     ctx.globalCompositeOperation = "multiply";
@@ -713,9 +852,13 @@ function startRun() {
   G.isNight = false;
   G.newRecord = false;
   obstacles.length = 0;
+  hoofDust.length = 0;
   nextGap = 550;
   rider.y = GROUND; rider.vy = 0; rider.jumping = false; rider.ducking = false;
   panelOver.classList.remove("show");
+  panelPause.classList.remove("show");
+  btnPause.textContent = "Ⅱ";
+  btnPause.setAttribute("aria-label", "Пауза");
 }
 
 function gameOver() {
@@ -736,10 +879,14 @@ function togglePause() {
   if (G.state === "run") {
     G.state = "pause";
     panelPause.classList.add("show");
+    btnPause.textContent = "▶";
+    btnPause.setAttribute("aria-label", "Продолжить игру");
   } else if (G.state === "pause") {
     G.state = "run";
     lastTime = 0;
     panelPause.classList.remove("show");
+    btnPause.textContent = "Ⅱ";
+    btnPause.setAttribute("aria-label", "Пауза");
   }
 }
 
@@ -749,6 +896,9 @@ const panelPause = document.getElementById("panelPause");
 const overScore = document.getElementById("overScore");
 const overRecord = document.getElementById("overRecord");
 const btnMute = document.getElementById("btnMute");
+const btnPause = document.getElementById("btnPause");
+const btnJump = document.getElementById("btnJump");
+const btnDuck = document.getElementById("btnDuck");
 btnMute.textContent = sound.muted ? "🔇" : "🔊";
 
 function pressJump() {
@@ -770,31 +920,51 @@ addEventListener("keyup", (e) => {
   else if (["ArrowDown", "KeyS"].includes(e.code)) rider.ducking = false;
 });
 
-let duckPointer = null;
 cv.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   sound.ensure();
-  const rect = cv.getBoundingClientRect();
-  const yFrac = (e.clientY - rect.top) / rect.height;
-  if (G.state === "run" && yFrac > 0.72 && e.pointerType !== "mouse") {
-    rider.ducking = true;
-    duckPointer = e.pointerId;
-  } else {
-    pressJump();
-  }
+  pressJump();
 });
-addEventListener("pointerup", (e) => {
-  if (e.pointerId === duckPointer) { rider.ducking = false; duckPointer = null; }
-  else rider.cutJump();
-});
+cv.addEventListener("pointerup", () => rider.cutJump());
+cv.addEventListener("pointercancel", () => rider.cutJump());
+
+function holdButton(button, onDown, onUp) {
+  let activePointer = null;
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activePointer = event.pointerId;
+    button.setPointerCapture?.(event.pointerId);
+    button.classList.add("active");
+    onDown();
+  });
+  const release = (event) => {
+    if (activePointer === null || event.pointerId !== activePointer) return;
+    activePointer = null;
+    button.classList.remove("active");
+    onUp();
+  };
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
+}
+
+holdButton(btnJump, () => { sound.ensure(); pressJump(); }, () => rider.cutJump());
+holdButton(btnDuck, () => {
+  sound.ensure();
+  if (G.state === "idle") startRun();
+  if (G.state === "run") rider.ducking = true;
+}, () => { rider.ducking = false; });
 
 document.getElementById("btnRestart").addEventListener("click", (e) => { e.stopPropagation(); startRun(); });
+document.getElementById("btnContinue").addEventListener("click", (e) => { e.stopPropagation(); togglePause(); });
 function toggleMute() {
   sound.muted = !sound.muted;
   storage.saveMute(sound.muted);
   btnMute.textContent = sound.muted ? "🔇" : "🔊";
 }
 btnMute.addEventListener("click", (e) => { e.stopPropagation(); toggleMute(); });
+btnPause.addEventListener("click", (e) => { e.stopPropagation(); togglePause(); });
 
 /* debug: #demo — автостарт, #night, #duck, #ffN — промотать N кадров,
    #only-yurt|tiger|sheep|eagle|bush — спавнить только этот тип */
@@ -813,6 +983,12 @@ if (location.hash.includes("demo")) {
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && G.state === "run") togglePause();
 });
+
+window.__batyrGame = {
+  get state() { return G.state; },
+  get viewport() { return { width: W, height: H, ground: GROUND }; },
+  get rider() { return { jumping: rider.jumping, ducking: rider.ducking, y: rider.y }; },
+};
 </script>
 </body>
 </html>
